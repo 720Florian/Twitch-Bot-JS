@@ -91,7 +91,6 @@ The token is saved to `.env` automatically as `STREAMER_OAUTH_TOKEN`.
 - `channel:read:subscriptions`
 - `moderator:read:followers`
 
-Note: `channel.follow` requires `moderator:read:followers`, and the streamer must be a moderator in their own channel.
 Note: The bot prints warnings if a configured username doesn't match the token's account, or if both usernames are the same.
 
 ## Run
