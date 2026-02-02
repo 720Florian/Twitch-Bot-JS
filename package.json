@@ -2,8 +2,8 @@
     "name": "twitch-bot-js",
     "version": "1.0.0",
     "description": "This is a JS Twitch bot",
-    "license": "ISC",
-    "author": "",
+    "license": "MIT",
+    "author": "720Florian",
     "type": "module",
     "main": "Bot.js",
     "scripts": {
