@@ -2,6 +2,8 @@ import WebSocket from "ws";
 import dotenv from "dotenv";
 import http from "http";
 import { exec } from "child_process";
+import fs from "fs/promises";
+import path from "path";
 
 dotenv.config();
 
@@ -94,10 +96,43 @@ async function authorizeWithLocalCallback(label, scopes) {
     );
     const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${Redirect_URI}&response_type=token&force_verify=true&scope=${scopes.join("%20")}`;
     const token = await startLocalAuthServer(redirectUrl, label, authUrl);
+    const envKey = `${label.toUpperCase()}_OAUTH_TOKEN`;
+    await saveTokenToEnv(envKey, token);
     console.log(
-        `Captured ${label} token. Add it to your .env as ${label.toUpperCase()}_OAUTH_TOKEN to reuse it next time.`,
+        `Captured ${label} token. Saved to .env as ${envKey}.`,
     );
     return token;
+}
+
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function upsertEnvValue(content, key, value) {
+    const line = `${key}=${value}`;
+    const keyPattern = new RegExp(`^${escapeRegExp(key)}=.*$`, "m");
+    if (keyPattern.test(content)) {
+        return content.replace(keyPattern, line);
+    }
+    const trimmed = content.replace(/\s*$/, "");
+    const separator = trimmed.length ? "\n" : "";
+    return `${trimmed}${separator}${line}\n`;
+}
+
+async function saveTokenToEnv(key, token) {
+    const envPath = path.join(process.cwd(), ".env");
+    let content = "";
+    try {
+        content = await fs.readFile(envPath, "utf8");
+    } catch (err) {
+        if (err.code !== "ENOENT") {
+            throw err;
+        }
+    }
+    const updated = upsertEnvValue(content, key, token);
+    if (updated !== content) {
+        await fs.writeFile(envPath, updated, "utf8");
+    }
 }
 
 function openBrowser(url) {

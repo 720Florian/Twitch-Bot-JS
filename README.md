@@ -71,7 +71,7 @@ This project uses a **local callback** to capture the token automatically.
 2. It starts a local server on `http://localhost:3000` (or your configured redirect URI).
 3. Your browser opens for the **bot account** login.
 4. After authorizing, the token is captured automatically.
-5. The token is printed in the console and should be saved to `.env` for future runs.
+5. The token is saved to `.env` automatically for future runs.
 
 **Bot scopes used:**
 - `user:bot`
@@ -80,7 +80,7 @@ This project uses a **local callback** to capture the token automatically.
 
 ### STREAMER_OAUTH_TOKEN (Streamer Account)
 Get a separate token using the local callback flow, but logged in as the streamer.
-Then copy the token into `STREAMER_OAUTH_TOKEN`.
+The token is saved to `.env` automatically as `STREAMER_OAUTH_TOKEN`.
 
 **Streamer scopes used:**
 - `channel:read:subscriptions`
