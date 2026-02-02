@@ -7,13 +7,15 @@ import path from "path";
 
 dotenv.config();
 
-const BOT_USER_ID = process.env.BOT_USER_ID; // This is the User ID of the chat bot
+let BOT_USER_ID = process.env.BOT_USER_ID; // This is the User ID of the chat bot
 const CLIENT_ID = process.env.CLIENT_ID_OF_APP;
 const Redirect_URI = process.env.REDIRECT_URI_OF_APP;
-const CHAT_CHANNEL_USER_ID = process.env.STREAMER_USER_ID; // This is the User ID of the channel that the bot will join and listen to chat messages of
+let CHAT_CHANNEL_USER_ID = process.env.STREAMER_USER_ID; // This is the User ID of the channel that the bot will join and listen to chat messages of
 const EVENTSUB_WEBSOCKET_URL = process.env.EVENTSUB_WEBSOCKET_URL;
 let OAUTH_TOKEN = process.env.BOT_OAUTH_TOKEN;
 let STREAMER_OAUTH_TOKEN = process.env.STREAMER_OAUTH_TOKEN;
+const BOT_USERNAME = process.env.BOT_USERNAME;
+const STREAMER_USERNAME = process.env.STREAMER_USERNAME;
 const GITHUB_URL = process.env.GITHUB_URL;
 let botWebsocketSessionID;
 let streamerWebsocketSessionID;
@@ -28,9 +30,45 @@ let streamerWebsocketSessionID;
         STREAMER_OAUTH_TOKEN = await getStreamerOAuthToken();
     }
 
+    if (!BOT_USER_ID) {
+        BOT_USER_ID = await getUserIdFromApi(
+            OAUTH_TOKEN,
+            BOT_USERNAME,
+            "BOT_USER_ID",
+        );
+    }
+
+    if (!CHAT_CHANNEL_USER_ID) {
+        CHAT_CHANNEL_USER_ID = await getUserIdFromApi(
+            STREAMER_OAUTH_TOKEN,
+            STREAMER_USERNAME,
+            "STREAMER_USER_ID",
+        );
+    }
+
     // Verify that the authentication is valid
-    await getAuth(OAUTH_TOKEN, "BOT_OAUTH_TOKEN");
-    await getAuth(STREAMER_OAUTH_TOKEN, "STREAMER_OAUTH_TOKEN");
+    const botAuth = await getAuth(OAUTH_TOKEN, "BOT_OAUTH_TOKEN");
+    const streamerAuth = await getAuth(
+        STREAMER_OAUTH_TOKEN,
+        "STREAMER_OAUTH_TOKEN",
+    );
+
+    if (BOT_USERNAME && STREAMER_USERNAME) {
+        const botName = BOT_USERNAME.trim().toLowerCase();
+        const streamerName = STREAMER_USERNAME.trim().toLowerCase();
+        if (botName && streamerName && botName === streamerName) {
+            console.warn(
+                "Warning: BOT_USERNAME and STREAMER_USERNAME are the same. This is unusual unless you intentionally use one account for both.",
+            );
+        }
+    }
+
+    warnIfUsernameMismatch(botAuth, BOT_USERNAME, "BOT_OAUTH_TOKEN");
+    warnIfUsernameMismatch(
+        streamerAuth,
+        STREAMER_USERNAME,
+        "STREAMER_OAUTH_TOKEN",
+    );
 
     // Start WebSocket client and register handlers
     const botWebsocketClient = startWebSocketClient(handleBotWebSocketMessage);
@@ -60,7 +98,9 @@ async function getAuth(token, label) {
         process.exit(1);
     }
 
+    const data = await response.json();
     console.log(`Validated ${label}.`);
+    return data;
 }
 
 async function getOAuthToken() {
@@ -97,7 +137,7 @@ async function authorizeWithLocalCallback(label, scopes) {
     const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${Redirect_URI}&response_type=token&force_verify=true&scope=${scopes.join("%20")}`;
     const token = await startLocalAuthServer(redirectUrl, label, authUrl);
     const envKey = `${label.toUpperCase()}_OAUTH_TOKEN`;
-    await saveTokenToEnv(envKey, token);
+    await saveEnvValue(envKey, token);
     console.log(
         `Captured ${label} token. Saved to .env as ${envKey}.`,
     );
@@ -106,6 +146,19 @@ async function authorizeWithLocalCallback(label, scopes) {
 
 function escapeRegExp(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function warnIfUsernameMismatch(authData, expectedUsername, label) {
+    if (!authData || !expectedUsername) {
+        return;
+    }
+    const expected = expectedUsername.trim().toLowerCase();
+    const actual = String(authData.login || "").trim().toLowerCase();
+    if (expected && actual && expected !== actual) {
+        console.warn(
+            `Warning: ${label} belongs to "${authData.login}", but the configured username is "${expectedUsername}".`,
+        );
+    }
 }
 
 function upsertEnvValue(content, key, value) {
@@ -119,7 +172,7 @@ function upsertEnvValue(content, key, value) {
     return `${trimmed}${separator}${line}\n`;
 }
 
-async function saveTokenToEnv(key, token) {
+async function saveEnvValue(key, value) {
     const envPath = path.join(process.cwd(), ".env");
     let content = "";
     try {
@@ -129,10 +182,52 @@ async function saveTokenToEnv(key, token) {
             throw err;
         }
     }
-    const updated = upsertEnvValue(content, key, token);
+    const updated = upsertEnvValue(content, key, value);
     if (updated !== content) {
         await fs.writeFile(envPath, updated, "utf8");
     }
+}
+
+async function getUserIdFromApi(token, username, envKey) {
+    if (!username) {
+        console.error(
+            `${envKey} not set and no username provided. Set ${envKey} or ${
+                envKey === "BOT_USER_ID" ? "BOT_USERNAME" : "STREAMER_USERNAME"
+            } in .env.`,
+        );
+        process.exit(1);
+    }
+
+    const response = await fetch(
+        `https://api.twitch.tv/helix/users?login=${encodeURIComponent(
+            username,
+        )}`,
+        {
+            method: "GET",
+            headers: {
+                Authorization: "Bearer " + token,
+                "Client-Id": CLIENT_ID,
+            },
+        },
+    );
+
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        console.error(`Failed to fetch ${envKey} for ${username}`);
+        console.error(data);
+        process.exit(1);
+    }
+
+    const data = await response.json();
+    const userId = data?.data?.[0]?.id;
+    if (!userId) {
+        console.error(`No user found for ${username}`);
+        process.exit(1);
+    }
+
+    await saveEnvValue(envKey, userId);
+    console.log(`Saved ${envKey} to .env for ${username}.`);
+    return userId;
 }
 
 function openBrowser(url) {

@@ -27,10 +27,12 @@ REDIRECT_URI_OF_APP=http://localhost:3000
 EVENTSUB_WEBSOCKET_URL=wss://eventsub.wss.twitch.tv/ws
 
 # Channel (Streamer)
+STREAMER_USERNAME=YOUR_STREAMER_USERNAME
 STREAMER_USER_ID=YOUR_STREAMER_USER_ID
 STREAMER_OAUTH_TOKEN=YOUR_STREAMER_OAUTH_TOKEN
 
 # Bot
+BOT_USERNAME=YOUR_BOT_USERNAME
 BOT_USER_ID=YOUR_BOT_USER_ID
 BOT_OAUTH_TOKEN=YOUR_BOT_OAUTH_TOKEN
 
@@ -54,7 +56,10 @@ wss://eventsub.wss.twitch.tv/ws
 ```
 
 ### BOT_USER_ID and STREAMER_USER_ID
-You can get a user ID from the Twitch API. Example with a token:
+If you set `BOT_USERNAME` and `STREAMER_USERNAME`, the bot will fetch the IDs
+automatically via the Twitch API and save them to `.env`.
+
+Manual lookup example with a token:
 
 ```
 curl -H "Authorization: Bearer YOUR_TOKEN" \
@@ -87,6 +92,7 @@ The token is saved to `.env` automatically as `STREAMER_OAUTH_TOKEN`.
 - `moderator:read:followers`
 
 Note: `channel.follow` requires `moderator:read:followers`, and the streamer must be a moderator in their own channel.
+Note: The bot prints warnings if a configured username doesn't match the token's account, or if both usernames are the same.
 
 ## Run
 ```
