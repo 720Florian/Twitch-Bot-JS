@@ -1,5 +1,7 @@
 import WebSocket from "ws";
 import dotenv from "dotenv";
+import http from "http";
+import { exec } from "child_process";
 
 dotenv.config();
 
@@ -8,8 +10,8 @@ const CLIENT_ID = process.env.CLIENT_ID_OF_APP;
 const Redirect_URI = process.env.REDIRECT_URI_OF_APP;
 const CHAT_CHANNEL_USER_ID = process.env.STREAMER_USER_ID; // This is the User ID of the channel that the bot will join and listen to chat messages of
 const EVENTSUB_WEBSOCKET_URL = process.env.EVENTSUB_WEBSOCKET_URL;
-const OAUTH_TOKEN = process.env.BOT_OAUTH_TOKEN;
-const STREAMER_OAUTH_TOKEN = process.env.STREAMER_OAUTH_TOKEN;
+let OAUTH_TOKEN = process.env.BOT_OAUTH_TOKEN;
+let STREAMER_OAUTH_TOKEN = process.env.STREAMER_OAUTH_TOKEN;
 const GITHUB_URL = process.env.GITHUB_URL;
 let botWebsocketSessionID;
 let streamerWebsocketSessionID;
@@ -17,19 +19,11 @@ let streamerWebsocketSessionID;
 // Start executing the bot from here
 (async () => {
     if (!OAUTH_TOKEN) {
-        await getOAuthToken();
-        console.error(
-            "No BOT_OAUTH_TOKEN found. Open the URL above, authorize the bot account, then set BOT_OAUTH_TOKEN in your .env and restart.",
-        );
-        process.exit(1);
+        OAUTH_TOKEN = await getOAuthToken();
     }
 
     if (!STREAMER_OAUTH_TOKEN) {
-        await getStreamerOAuthToken();
-        console.error(
-            "No STREAMER_OAUTH_TOKEN found. Open the URL above, authorize the streamer account, then set STREAMER_OAUTH_TOKEN in your .env and restart.",
-        );
-        process.exit(1);
+        STREAMER_OAUTH_TOKEN = await getStreamerOAuthToken();
     }
 
     // Verify that the authentication is valid
@@ -75,28 +69,125 @@ async function getOAuthToken() {
         "user:bot",
         "user:read:chat",
         "user:write:chat",
-        "moderator:read:followers",
     ];
 
-    const url = `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${Redirect_URI}&response_type=token&scope=${Scopes.join("%20")}`;
-
-    console.log(
-        "To authorize the bot, please open the following URL in your browser:\n",
-    );
-    console.log(url);
-
-    // Note: Implicit grant requires manual copy of the token from the redirect URL.
+    return await authorizeWithLocalCallback("bot", Scopes);
 }
 
 async function getStreamerOAuthToken() {
     let Scopes = ["channel:read:subscriptions", "moderator:read:followers"];
 
-    const url = `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${Redirect_URI}&response_type=token&scope=${Scopes.join("%20")}`;
+    return await authorizeWithLocalCallback("streamer", Scopes);
+}
+
+async function authorizeWithLocalCallback(label, scopes) {
+    const redirectUrl = new URL(Redirect_URI);
+    if (redirectUrl.hostname !== "localhost") {
+        console.error(
+            `REDIRECT_URI_OF_APP must be localhost for local callback auth. Current: ${Redirect_URI}`,
+        );
+        process.exit(1);
+    }
 
     console.log(
-        "To authorize the streamer account, please open the following URL in your browser:\n",
+        `Authorize the ${label} account in the browser window that opens next.`,
     );
-    console.log(url);
+    const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${Redirect_URI}&response_type=token&force_verify=true&scope=${scopes.join("%20")}`;
+    const token = await startLocalAuthServer(redirectUrl, label, authUrl);
+    console.log(
+        `Captured ${label} token. Add it to your .env as ${label.toUpperCase()}_OAUTH_TOKEN to reuse it next time.`,
+    );
+    return token;
+}
+
+function openBrowser(url) {
+    const quoted = `"${url}"`;
+    const command =
+        process.platform === "darwin"
+            ? `open ${quoted}`
+            : process.platform === "win32"
+              ? `start ${quoted}`
+              : `xdg-open ${quoted}`;
+
+    exec(command, (error) => {
+        if (error) {
+            console.log("Open this URL in your browser to authorize:");
+            console.log(url);
+        }
+    });
+}
+
+function startLocalAuthServer(redirectUrl, label, authUrl) {
+    return new Promise((resolve, reject) => {
+        const port = redirectUrl.port || "3000";
+        const path = redirectUrl.pathname || "/";
+
+        const server = http.createServer((req, res) => {
+            if (req.method === "GET" && req.url?.startsWith(path)) {
+                res.writeHead(200, { "Content-Type": "text/html" });
+                res.end(`<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Twitch Auth</title></head>
+<body>
+<h1>Authorizing ${label} account...</h1>
+<p>Please make sure you are logged in as the ${label} account.</p>
+<p>You can close this tab after success.</p>
+<script>
+  const hash = window.location.hash.slice(1);
+  const params = new URLSearchParams(hash);
+  const token = params.get("access_token");
+  if (token) {
+    fetch("/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token })
+    }).then(() => {
+      document.body.innerHTML = "<h1>Token received. You can close this tab.</h1>";
+    });
+  } else {
+    document.body.innerHTML = "<h1>No token found.</h1>";
+  }
+</script>
+</body>
+</html>`);
+                return;
+            }
+
+            if (req.method === "POST" && req.url === "/token") {
+                let body = "";
+                req.on("data", (chunk) => {
+                    body += chunk.toString();
+                });
+                req.on("end", () => {
+                    try {
+                        const data = JSON.parse(body);
+                        if (!data.token) {
+                            throw new Error("Missing token");
+                        }
+                        res.writeHead(200);
+                        res.end("OK");
+                        server.close();
+                        resolve(data.token);
+                    } catch (err) {
+                        res.writeHead(400);
+                        res.end("Invalid token payload");
+                        reject(err);
+                    }
+                });
+                return;
+            }
+
+            res.writeHead(404);
+            res.end("Not found");
+        });
+
+        server.listen(Number(port), "localhost", () => {
+            console.log(
+                `Local auth server listening on http://localhost:${port}${path}`,
+            );
+            openBrowser(authUrl);
+        });
+    });
 }
 
 function startWebSocketClient(onMessage) {
